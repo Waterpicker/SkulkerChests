@@ -34,108 +34,57 @@ import org.spongepowered.api.world.World;
 
 import java.nio.file.Path;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import static org.spongepowered.api.data.DataQuery.of;
 import static org.spongepowered.api.data.manipulator.catalog.CatalogItemData.DISPLAY_NAME_DATA;
 import static org.spongepowered.api.data.manipulator.catalog.CatalogItemData.INVENTORY_ITEM_DATA;
 
-@Plugin(id = "skulkerchests", description = "Makes chest behave similar to Skulker Chests", authors = "Waterpicker")
+@Plugin(id = "skulkerchests", description = "Makes chest behave similar to Skulker Boxes", authors = "Waterpicker")
 public class Skulkerchests {
-    @Inject
-    private PluginContainer container;
+    List<Location<World>> map = new ArrayList<>();
 
+    @Listener()
+    public void onBlockItemDrop(DropItemEvent.Destruct event, @First Player player, @First BlockSnapshot blockSnapshot) {
+        if(blockSnapshot.getState().getType().equals(BlockTypes.CHEST)) {
 
-    @Inject
-    @ConfigDir(sharedRoot = false)
-    private Path derp;
+            long count = event.getEntities().stream().map(e -> e.get(Keys.REPRESENTED_ITEM).get()).map(ItemStackSnapshot::getType).count();
 
-    private Map<Location<World>, Content> blocks = new HashMap<>();
+            player.sendMessage(Text.of(count));
 
-    @Listener
-    public void onChestBreak(ChangeBlockEvent.Break event) {
+            event.filterEntities(s -> false);
 
+            if (count == 1) {
+                map.add(blockSnapshot.getLocation().get());
+                ItemStack stack = ItemStack.builder().fromBlockSnapshot(blockSnapshot).build();
+                stack.offer(Keys.ITEM_LORE, getTotals(stack.toContainer()));
 
-        event.getTransactions().stream().map(Transaction::getOriginal).filter(blockSnapshot -> blockSnapshot.getState().getType() == BlockTypes.CHEST).forEach(block -> {
-            block.getLocation().ifPresent(loc -> {
-                ItemStack stack = ItemStack.builder().fromBlockSnapshot(block).build();
-                stack.offer(Keys.ITEM_LORE, getLore(stack));
+                Entity itemEntity = blockSnapshot.getLocation().get().createEntity(EntityTypes.ITEM);
+                itemEntity.offer(Keys.REPRESENTED_ITEM, stack.createSnapshot());
 
-                if(!stack.equalTo(ItemStack.empty())) blocks.put(loc, new Content(stack));
-            });
-        });
+                blockSnapshot.getLocation().get().spawnEntity(itemEntity);
+            }
+        }
     }
 
-    @Listener
-    public void onItemDrops(DropItemEvent.Destruct event, @First BlockSpawnCause cause) {
-        System.out.println(event.getCause());
-
-        cause.getBlockSnapshot().getLocation().filter(location -> blocks.containsKey(location)).ifPresent(location -> {
-            Content content = blocks.get(location);
-
-            if(content.isUsed()) {
-                blocks.remove(location);
-            }
-
-            if(content.getItemStack() != null && !content.isUsed()) {
-                Entity itemEntity = location.getExtent().createEntity(EntityTypes.ITEM, location.getPosition());
-                itemEntity.offer(Keys.REPRESENTED_ITEM, content.getItemStack().createSnapshot());
-
-                location.getExtent().spawnEntity(itemEntity, event.getCause());
-
-                content.toggleUsed();
-            }
-
-            event.setCancelled(true);
-        });
-    }
-
-    private List<Text> getLore(ItemStack stack) {
-        Optional<Inventory> inventory = stack.get(INVENTORY_ITEM_DATA).map(Carrier::getInventory);
-
-        List<Text> list = new ArrayList<>();
-
-        if (inventory.isPresent() && !isEmpty(inventory.get())) {
-            int remaining = inventory.get().totalItems() - 5;
-
-            inventory.get().slots().forEach(slot -> {
-                slot.peek().ifPresent(s -> {
-                    list.add(Text.of(s.get(Keys.DISPLAY_NAME), " x" + s.getQuantity()));
-                });
+    List<Text> getTotals(DataView view) {
+        ArrayList<Text> draft = new ArrayList<>();
+        view.getViewList(DataQuery.of('.', "UnsafeData.BlockEntityTag.Items")).ifPresent((items) -> {
+            items.forEach((stack) -> {
+                String name = stack.getString(DataQuery.of("tag.display.Name", ".")).orElse(Sponge.getRegistry().getType(ItemType.class, stack.getString(DataQuery.of("id")).get()).get().getTranslation().get());
+                Integer count = stack.getInt(DataQuery.of("Count")).get();
+                draft.add(Text.of(TextColors.WHITE, name + " x" + count));
             });
+        });
 
-
-            if (remaining > 0) {
-                list.add(Text.of(remaining, "x more items"));
-            }
+        int extra = draft.size() - 5;
+        if(extra <= 0) {
+            return draft;
         } else {
-            System.out.println("Derp");
-        }
+            List<Text> fin = draft.stream().limit(5).collect(Collectors.toList());
 
-        return list;
+            fin.add(Text.of(TextColors.WHITE, "and " + extra + " more..."));
+            return fin;
+        }
     }
-
-    private boolean isEmpty(Inventory inventory) {
-        return inventory.totalItems() <= 0;
-    }
-}
-
-class Content {
-        private boolean isUsed = false;
-        private ItemStack stack;
-
-        Content(ItemStack stack) {
-            this.stack = stack;
-        }
-
-        boolean isUsed() {
-            return isUsed;
-        }
-
-        void toggleUsed() {
-            isUsed = true;
-        }
-
-        ItemStack getItemStack() {
-            return stack;
-        }
 }
